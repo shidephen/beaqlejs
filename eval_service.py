@@ -1,8 +1,7 @@
 import logging
 import sys
 import json
-from tornado.web import RequestHandler
-from tornado.web import Application
+from tornado.web import RequestHandler, StaticFileHandler, Application
 from tornado.options import define, options, parse_command_line
 from tornado.httpserver import HTTPServer
 from tornado.ioloop import IOLoop
@@ -15,7 +14,7 @@ define('mongodb_url', default='mongodb://mongo-0.mongo,mongo-1.mongo,mongo-2.mon
 define('mongodb_db', default='audio_eval')
 
 
-class FeedbackHandler(RequestHandler):
+class EvalHandler(RequestHandler):
     async def put(self, tid=None):
         """
         params:
@@ -31,15 +30,19 @@ class FeedbackHandler(RequestHandler):
             self.send_error(400, reason='Invalid json format')
             return
 
-        if 'exp' not in data or 'reason' not in data:
-            self.send_error(400, 'Missing key field')
+        logger.info(f'Request: {data}')
+
+        if tid is None:
+            self.send_error(400, reason='Need tid')
             return
-        
-        exp = data['exp']
-        reason = data['reason']
+
+        # if 'exp' not in data or 'reason' not in data:
+        #     self.send_error(400, 'Missing key field')
+        #     return
+
         db = self.settings['db']
 
-        await db.feedback.insert_one(data)
+        await db.test_results[tid].insert_one(data)
         self.finish()
     
     async def get(self, tid=None):
@@ -48,20 +51,33 @@ class FeedbackHandler(RequestHandler):
             self.send_error(500, reason='Need a test id')
             return
 
-        self.finish()
+        self.render('index.html')
         
 
 def ConfigHandler(RequestHandler):
-    async def get(self):
-        # TODO: 
-        self.finish()
+    async def get(self, tid=None):
+        if tid is None:
+            logger.warn('Must has a specific id')
+            self.send_error(400, reason='Must has a specific id')
+            return
+        
+        db = self.settings['db']
+        testsuite = db.testsuites[tid]
+        self.render('config/abx_config_template.js',
+            testsuite_name=testsuite.name,
+            tests=testsuite.tests
+        )
 
 
 def main():
 
     app = Application([
-        (r'/eval/(?P<tid>[\w/]+)', FeedbackHandler),
-        (r'/eval/(?P<tid>[\w/]+)/config', ConfigHandler),
+        (r'/eval/(?P<tid>[\w/]+)', EvalHandler),
+        (r'/eval/(?P<tid>[\w/]+)/submit', EvalHandler),
+        (r'/eval/(?P<tid>[\w/]+)/config.js', ConfigHandler),
+        (r"/img/(.*)",StaticFileHandler, {"path": "./img"}),
+        (r"/css/(.*)",StaticFileHandler, {"path": "./css"}),
+        (r"/js/(.*)",StaticFileHandler, {"path": "./js"}),
         ],
         template_path='static')
 
